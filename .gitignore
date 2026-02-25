@@ -1,0 +1,7 @@
+*.qcow2
+*.iso
+*.msi
+*.bak
+*.img
+*.vmdk
+*.vdi

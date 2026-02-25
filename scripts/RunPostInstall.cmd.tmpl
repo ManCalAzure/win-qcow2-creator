@@ -1,0 +1,7 @@
+@echo off
+setlocal
+if not exist C:\Windows\Temp\Packager mkdir C:\Windows\Temp\Packager
+echo %date% %time% RunPostInstall.cmd invoked>> C:\Windows\Temp\Packager\setuptrace.log
+echo %date% %time%> C:\Windows\Temp\Packager\runpostinstall.ran
+powershell.exe -ExecutionPolicy Bypass -File C:\Windows\Temp\Packager\PostInstall.ps1 -VirtioFlavor "{{.VirtioFlavor}}" -AdminUsername "{{.AdminUsername}}" -AdminPassword "{{.AdminPassword}}" -EnableRDP {{if .EnableRDP}}1{{else}}0{{end}} -OptimizeForSize {{if .OptimizeForSize}}1{{else}}0{{end}} -GoldenProfile {{if .GoldenProfile}}1{{else}}0{{end}} >> C:\Windows\Temp\Packager\postinstall.log 2>&1
+endlocal

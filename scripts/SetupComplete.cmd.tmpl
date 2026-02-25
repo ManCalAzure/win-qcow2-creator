@@ -1,0 +1,8 @@
+@echo off
+setlocal
+if not exist C:\Windows\Temp\Packager mkdir C:\Windows\Temp\Packager
+echo %date% %time% SetupComplete.cmd invoked>> C:\Windows\Temp\Packager\setuptrace.log
+echo %date% %time%> C:\Windows\Temp\Packager\setupcomplete.ran
+if not exist C:\Windows\Temp\Packager\RunPostInstall.cmd exit /b 0
+call C:\Windows\Temp\Packager\RunPostInstall.cmd
+endlocal
