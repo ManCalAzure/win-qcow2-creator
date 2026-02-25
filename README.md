@@ -42,10 +42,10 @@ go build -o windows-packager ./cmd/windows-packager
 ## Run UI
 
 ```bash
-./windows-packager -ui -ui-listen 127.0.0.1:8080
+./windows-packager -ui -ui-listen 0.0.0.0:8080
 ```
 
-Open `http://127.0.0.1:8080`.
+Open `http://<ip address of host>:8080`.
 
 Ubuntu defaults in UI/CLI:
 - `OVMF Code`: `/usr/share/OVMF/OVMF_CODE.fd`
