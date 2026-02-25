@@ -63,7 +63,7 @@ Ubuntu defaults in UI/CLI:
   -drivers-dir ./drivers \
   -cloudbase-msi ./CloudbaseInitSetup_x64.msi \
   -output ./build/win11.qcow2 \
-  -vnc 127.0.0.1:1 \
+  -vnc 0.0.0.0:0 \
   -ovmf-code /usr/share/OVMF/OVMF_CODE.fd \
   -ovmf-vars /usr/share/OVMF/OVMF_VARS.fd \
   -swtpm /usr/bin/swtpm \
