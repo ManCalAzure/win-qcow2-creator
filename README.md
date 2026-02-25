@@ -34,7 +34,8 @@ Optional ISO tools (fallbacks):
 ## Build
 
 ```bash
-cd ubuntu-app
+git clone https://github.com/ManCalAzure/win-qcow2-creator-for-ubuntu.git
+cd win-qcow2-creator-for-ubuntu
 go build -o windows-packager ./cmd/windows-packager
 ```
 
