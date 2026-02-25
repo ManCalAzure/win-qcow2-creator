@@ -11,7 +11,7 @@ It builds unattended Windows qcow2 images (Win11 / Server 2025) from Ubuntu 24.
 - Optional QEMU guest agent install
 - Optional RDP enablement
 - Sysprep + shutdown
-- Final compressed qcow2 output
+- Final compressed qcow2 output (compression may fail just run manually - ```qemu-img convert -p -O qcow2 -c win11.qcow2 win11.min.qcow2``` ) 
 - Built-in web UI (`-ui`)
 
 ## Ubuntu 24 prerequisites
@@ -27,9 +27,9 @@ Optional ISO tools (fallbacks):
 
 ## Expected local inputs
 
-- `Win11.iso` and/or `WinServer2025.iso`
-- `drivers/` (VirtIO extracted driver tree)
-- Optional `CloudbaseInitSetup_x64.msi`
+- `Win11.iso` and/or `WinServer2025.iso` <---- in main dir
+- `drivers/` (VirtIO extracted driver tree) <- in main dir
+- Optional `CloudbaseInitSetup_x64.msi` <----- in main dir
 
 ## Build
 
