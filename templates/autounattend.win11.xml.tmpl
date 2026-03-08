@@ -188,6 +188,11 @@
       <FirstLogonCommands>
         <SynchronousCommand wcm:action="add">
           <Order>1</Order>
+          <Description>Enable built-in Administrator account</Description>
+          <CommandLine>net user Administrator /active:yes</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
           <Description>Packager PostInstall Fallback</Description>
           <CommandLine>cmd /c if exist C:\Windows\Temp\Packager\RunPostInstall.cmd call C:\Windows\Temp\Packager\RunPostInstall.cmd</CommandLine>
         </SynchronousCommand>
