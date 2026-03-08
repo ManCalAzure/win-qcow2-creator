@@ -93,10 +93,10 @@ func (s *server) handleIndex(cwd string) http.HandlerFunc {
 
 		data := indexData{
 			CWD:                 cwd,
-			DefaultWinISO:       defaultIfExists(filepath.Join(cwd, "Win11.iso")),
-			DefaultServerISO:    defaultIfExists(filepath.Join(cwd, "WinServer2025.iso")),
-			DefaultDriversDir:   firstExisting(filepath.Join(cwd, "drivers"), filepath.Join(cwd, "virtio-drivers")),
-			DefaultCloudbaseMSI: defaultIfExists(filepath.Join(cwd, "CloudbaseInitSetup_x64.msi")),
+			DefaultWinISO:       firstExisting(filepath.Join(cwd, "Win11.iso"), "/data/Win11.iso"),
+			DefaultServerISO:    firstExisting(filepath.Join(cwd, "WinServer2025.iso"), "/data/WinServer2025.iso"),
+			DefaultDriversDir:   firstExisting(filepath.Join(cwd, "drivers"), filepath.Join(cwd, "virtio-drivers"), "/app/drivers"),
+			DefaultCloudbaseMSI: firstExisting(filepath.Join(cwd, "CloudbaseInitSetup_x64.msi"), "/data/CloudbaseInitSetup_x64.msi"),
 			Jobs:                s.jobsSnapshot(),
 		}
 
@@ -142,8 +142,8 @@ func (s *server) handleBuild(cwd string) http.HandlerFunc {
 			SWTPMBin:              orDefault(strings.TrimSpace(r.FormValue("swtpm")), "/usr/bin/swtpm"),
 			QemuAccel:             strings.TrimSpace(r.FormValue("qemu_accel")),
 			QemuCPU:               strings.TrimSpace(r.FormValue("qemu_cpu")),
-			OVMFCode:              orDefault(strings.TrimSpace(r.FormValue("ovmf_code")), "/usr/share/OVMF/OVMF_CODE.fd"),
-			OVMFVarsTemplate:      orDefault(strings.TrimSpace(r.FormValue("ovmf_vars")), "/usr/share/OVMF/OVMF_VARS.fd"),
+			OVMFCode:              orDefault(strings.TrimSpace(r.FormValue("ovmf_code")), "/usr/share/OVMF/OVMF_CODE_4M.fd"),
+			OVMFVarsTemplate:      orDefault(strings.TrimSpace(r.FormValue("ovmf_vars")), "/usr/share/OVMF/OVMF_VARS_4M.fd"),
 			WindowsEditionIndex:   edition,
 			AdminUsername:         orDefault(strings.TrimSpace(r.FormValue("admin_username")), "Administrator"),
 			AdminPassword:         orDefault(strings.TrimSpace(r.FormValue("admin_password")), "P@ssw0rd!"),
@@ -313,11 +313,11 @@ const indexHTML = `<!doctype html>
         <div><label>Backend</label><select name="backend"><option value="qemu">qemu</option><option value="libvirt">libvirt</option></select></div>
         <div><label>Profile</label><select name="profile"><option value="default">default</option><option value="golden">golden</option></select></div>
         <div><label>VM Name (optional)</label><input name="vm_name" value="" placeholder="auto-generated" /></div>
-        <div><label>Windows ISO Path</label><input id="windows_iso" name="windows_iso" value="{{.DefaultWinISO}}" data-win11="{{.DefaultWinISO}}" data-ws2025="{{.DefaultServerISO}}" required /></div>
+        <div><label>Windows ISO Path</label><input id="windows_iso" name="windows_iso" value="{{.DefaultWinISO}}" data-win11="{{if .DefaultWinISO}}{{.DefaultWinISO}}{{else}}/data/Win11.iso{{end}}" data-ws2025="{{if .DefaultServerISO}}{{.DefaultServerISO}}{{else}}/data/WinServer2025.iso{{end}}" required /></div>
         <div><label>Drivers Directory</label><input name="drivers_dir" value="{{.DefaultDriversDir}}" required /></div>
         <div><label>Cloudbase-Init MSI (x64)</label><input name="cloudbase_msi" value="{{.DefaultCloudbaseMSI}}" /></div>
-        <div><label>Output Image</label><input name="output_image" value="" placeholder="./build/win11-golden.qcow2" /></div>
-        <div><label>Work Directory</label><input name="workdir" value="./build" /></div>
+        <div><label>Output Image</label><input id="output_image" name="output_image" value="/data/win11.qcow2" /></div>
+        <div><label>Work Directory</label><input name="workdir" value="/data/build" /></div>
         <div><label>Edition Index</label><input name="edition_index" value="1" /></div>
         <div><label>Disk Size</label><input name="disk_size" value="40G" /></div>
         <div><label>vCPUs</label><input name="cpus" value="4" /></div>
@@ -329,10 +329,10 @@ const indexHTML = `<!doctype html>
         <div><label>SWTPM</label><input name="swtpm" value="/usr/bin/swtpm" /></div>
         <div><label>QEMU Accel Override</label><input name="qemu_accel" placeholder="auto" /></div>
         <div><label>QEMU CPU Override</label><input name="qemu_cpu" placeholder="auto" /></div>
-        <div><label>VNC Listen (optional)</label><input name="vnc_listen" placeholder="127.0.0.1:1 or :1" /></div>
+        <div><label>VNC Listen</label><input name="vnc_listen" value="0.0.0.0:0" /></div>
         <div><label>qemu-img Convert Threads (0=auto)</label><input name="img_convert_threads" value="0" /></div>
-        <div><label>OVMF Code</label><input name="ovmf_code" value="/usr/share/OVMF/OVMF_CODE.fd" /></div>
-        <div><label>OVMF Vars</label><input name="ovmf_vars" value="/usr/share/OVMF/OVMF_VARS.fd" /></div>
+        <div><label>OVMF Code</label><input name="ovmf_code" value="/usr/share/OVMF/OVMF_CODE_4M.fd" /></div>
+        <div><label>OVMF Vars</label><input name="ovmf_vars" value="/usr/share/OVMF/OVMF_VARS_4M.fd" /></div>
       </div>
       <h3 style="margin-top: 20px; font-size: 16px; color: var(--muted);">Build Options</h3>
       <div class="checks" style="margin: 10px 0 14px;">
@@ -371,10 +371,13 @@ const indexHTML = `<!doctype html>
 <script>
   const osSelect = document.getElementById('os');
   const isoInput = document.getElementById('windows_iso');
+  const outputInput = document.getElementById('output_image');
+  const outputMap = { win11: '/data/win11.qcow2', ws2025: '/data/ws2025.qcow2' };
   osSelect.addEventListener('change', () => {
     const key = osSelect.value === 'ws2025' ? 'ws2025' : 'win11';
     const suggested = isoInput.dataset[key];
     if (suggested) isoInput.value = suggested;
+    outputInput.value = outputMap[key];
   });
 </script>
 </body>

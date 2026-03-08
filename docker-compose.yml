@@ -1,0 +1,44 @@
+services:
+  windows-packager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zedmanny/windows-packager:latest
+    container_name: windows-packager
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"   # Web UI — open http://localhost:8080
+      - "5900:5900"   # VNC display :0
+
+    devices:
+      # Pass KVM through for hardware-accelerated QEMU.
+      # Remove this block if /dev/kvm is unavailable (TCG fallback, much slower).
+      - /dev/kvm:/dev/kvm
+
+    volumes:
+      # Mount the directory that holds your Windows ISOs, optional MSIs,
+      # and will receive the finished qcow2 output.
+      #
+      # Place files here on the host:
+      #   ./data/Win11.iso
+      #   ./data/WinServer2025.iso          (optional)
+      #   ./data/CloudbaseInitSetup_x64.msi (optional)
+      #
+      # Finished images are written to:
+      #   ./data/build/<os>.qcow2
+      - ./data:/data
+
+    # ── Optional: CLI / batch build ───────────────────────────────────────────
+    # Comment out the default CMD in Dockerfile (or override here) for a single
+    # unattended headless build without the web UI:
+    #
+    # command:
+    #   - -os=win11
+    #   - -win-iso=/data/Win11.iso
+    #   - -drivers-dir=/app/drivers
+    #   - -cloudbase-msi=/data/CloudbaseInitSetup_x64.msi
+    #   - -output=/data/build/win11.qcow2
+    #   - -workdir=/data/build
+    #   - -vnc=0.0.0.0:0
+    #   - -headless=true

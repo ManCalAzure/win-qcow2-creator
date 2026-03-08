@@ -1,0 +1,27 @@
+# ── Large binary / image files (never bake into the image) ──────────────────
+*.iso
+*.qcow2
+*.img
+*.msi
+*.vmdk
+*.vdi
+*.bak
+
+# ── Compiled binaries ────────────────────────────────────────────────────────
+windows-packager
+windows-packager-linux
+
+# ── Build artefacts / cache ──────────────────────────────────────────────────
+build/
+mnt-virtio/
+
+# ── Duplicate driver tree (drivers/ is the one copied into the image) ────────
+virtio-drivers/
+
+# ── Git / IDE metadata ───────────────────────────────────────────────────────
+.git/
+.gitignore
+tree.txt
+
+# ── Doc / extras not needed inside the image ────────────────────────────────
+README.md

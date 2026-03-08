@@ -1,6 +1,7 @@
 package packager
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -165,7 +167,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 	}
 
-	if err := buildISO(ctx, bc.logWriter, bc.answerRoot, bc.answerISOPath); err != nil {
+	if err := buildISO(ctx, bc.logWriter, bc.answerRoot, bc.answerISOPath, ""); err != nil {
 		return fmt.Errorf("build answer ISO: %w", err)
 	}
 
@@ -315,7 +317,7 @@ func prepareDriverMedia(ctx context.Context, bc buildContext) error {
 	if err := prepareDriverBundle(bc); err != nil {
 		return err
 	}
-	if err := buildISO(ctx, bc.logWriter, bc.driverISORoot, bc.driverISOPath); err != nil {
+	if err := buildISO(ctx, bc.logWriter, bc.driverISORoot, bc.driverISOPath, ""); err != nil {
 		return fmt.Errorf("build driver ISO: %w", err)
 	}
 
@@ -332,20 +334,26 @@ func prepareAnswerMedia(bc buildContext) error {
 		return fmt.Errorf("create answer media scripts dir: %w", err)
 	}
 
+	// Prefer bootmgfw.efi (Windows Boot Manager, no "press any key" prompt)
+	// over BOOTX64.EFI (cdboot.efi, which prompts and times out in headless builds).
+	// Use bcfg+reset so OVMF boots the entry via the boot manager (proper context)
+	// rather than running the EFI binary directly from the shell (which can fail).
 	startupNSH := strings.Join([]string{
 		"@echo -off",
 		"map -r",
 		"for %i run (0 1 2 3 4 5 6 7 8 9)",
-		"  if exist fs%i:\\EFI\\BOOT\\BOOTX64.EFI then",
-		"    fs%i:",
-		"    \\EFI\\BOOT\\BOOTX64.EFI",
-		"  endif",
 		"  if exist fs%i:\\EFI\\Microsoft\\Boot\\bootmgfw.efi then",
-		"    fs%i:",
-		"    \\EFI\\Microsoft\\Boot\\bootmgfw.efi",
+		"    bcfg boot add 0 fs%i:\\EFI\\Microsoft\\Boot\\bootmgfw.efi \"Windows Boot Manager\"",
+		"    reset",
 		"  endif",
 		"endfor",
-		"echo Failed to find Windows EFI bootloader",
+		"for %i run (0 1 2 3 4 5 6 7 8 9)",
+		"  if exist fs%i:\\EFI\\BOOT\\BOOTX64.EFI then",
+		"    bcfg boot add 0 fs%i:\\EFI\\BOOT\\BOOTX64.EFI \"Windows\"",
+		"    reset",
+		"  endif",
+		"endfor",
+		"echo No Windows EFI bootloader found",
 		"reset -s",
 		"",
 	}, "\n")
@@ -421,40 +429,66 @@ func prepareAnswerMedia(bc buildContext) error {
 	return nil
 }
 
-func buildISO(ctx context.Context, out io.Writer, srcDir, outISO string) error {
+// qmpSendKey connects to the QEMU Machine Protocol socket and sends a single
+// keypress. It is best-effort: errors are logged and ignored.
+func qmpSendKey(sockPath, key string, log io.Writer) {
+	conn, err := net.DialTimeout("unix", sockPath, 2*time.Second)
+	if err != nil {
+		return // QMP socket not ready yet; caller will retry
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(4 * time.Second)) //nolint:errcheck
+
+	rd := bufio.NewReader(conn)
+	if _, err := rd.ReadString('\n'); err != nil { // greeting
+		return
+	}
+	if _, err := fmt.Fprint(conn, `{"execute":"qmp_capabilities"}`+"\n"); err != nil {
+		return
+	}
+	if _, err := rd.ReadString('\n'); err != nil { // {"return":{}}
+		return
+	}
+	msg := fmt.Sprintf(`{"execute":"send-key","arguments":{"keys":[{"type":"qcode","data":"%s"}]}}`+"\n", key)
+	if _, err := fmt.Fprint(conn, msg); err != nil {
+		return
+	}
+	rd.ReadString('\n') //nolint:errcheck
+	fmt.Fprintf(log, "qmp: sent key %q\n", key)
+}
+
+// buildISO creates an ISO9660 image from srcDir.
+// If elToritoBootFile is non-empty (e.g. "startup.nsh"), an El Torito boot
+// record is embedded so that UEFI firmware (OVMF CdRomDxe) will create a
+// child CDROM handle and map the volume as FS*, allowing the UEFI Shell to
+// read files (in particular startup.nsh) directly from the ISO.
+func buildISO(ctx context.Context, out io.Writer, srcDir, outISO, elToritoBootFile string) error {
 	if err := os.RemoveAll(outISO); err != nil {
 		return fmt.Errorf("remove existing iso %s: %w", outISO, err)
 	}
+
+	baseArgs := []string{
+		"-iso-level", "3",
+		"-J", "-joliet-long",
+		"-R",
+		"-V", "CIDATA",
+	}
+	if elToritoBootFile != "" {
+		baseArgs = append(baseArgs, "-b", elToritoBootFile, "-no-emul-boot", "-boot-load-size", "4")
+	}
+
 	if _, err := exec.LookPath("xorriso"); err == nil {
-		return runCmd(ctx, out, "xorriso",
-			"-as", "mkisofs",
-			"-iso-level", "3",
-			"-J", "-joliet-long",
-			"-R",
-			"-V", "CIDATA",
-			"-o", outISO,
-			srcDir,
-		)
+		args := append([]string{"-as", "mkisofs"}, baseArgs...)
+		args = append(args, "-o", outISO, srcDir)
+		return runCmd(ctx, out, "xorriso", args...)
 	}
 	if _, err := exec.LookPath("genisoimage"); err == nil {
-		return runCmd(ctx, out, "genisoimage",
-			"-iso-level", "3",
-			"-J", "-joliet-long",
-			"-R",
-			"-V", "CIDATA",
-			"-o", outISO,
-			srcDir,
-		)
+		args := append(baseArgs, "-o", outISO, srcDir)
+		return runCmd(ctx, out, "genisoimage", args...)
 	}
 	if _, err := exec.LookPath("mkisofs"); err == nil {
-		return runCmd(ctx, out, "mkisofs",
-			"-iso-level", "3",
-			"-J", "-joliet-long",
-			"-R",
-			"-V", "CIDATA",
-			"-o", outISO,
-			srcDir,
-		)
+		args := append(baseArgs, "-o", outISO, srcDir)
+		return runCmd(ctx, out, "mkisofs", args...)
 	}
 	return fmt.Errorf("no ISO builder found: install one of xorriso, genisoimage, or mkisofs")
 }
@@ -529,13 +563,14 @@ func runInstallVMQEMU(ctx context.Context, bc buildContext) error {
 	winISO := fmt.Sprintf("file=%s,if=none,id=winiso,media=cdrom,readonly=on", bc.cfg.WindowsISO)
 	answerISO := fmt.Sprintf("file=%s,if=none,id=answeriso,media=cdrom,readonly=on", bc.answerISOPath)
 	driverISO := fmt.Sprintf("file=%s,if=none,id=driveriso,media=cdrom,readonly=on", bc.driverISOPath)
+	qmpSock := filepath.Join(bc.buildDir, "qmp.sock")
 
 	args := []string{
 		"-machine", "q35,accel=" + accel,
 		"-cpu", cpu,
 		"-smp", fmt.Sprintf("%d", bc.cfg.CPUs),
 		"-m", fmt.Sprintf("%d", bc.cfg.MemoryMB),
-		"-boot", "order=dc,menu=on",
+		"-boot", "order=dc",
 		"-drive", fmt.Sprintf("if=pflash,format=raw,readonly=on,file=%s", bc.cfg.OVMFCode),
 		"-drive", fmt.Sprintf("if=pflash,format=raw,file=%s", bc.ovmfVarsPath),
 		"-device", "ich9-ahci,id=ahci0",
@@ -544,10 +579,11 @@ func runInstallVMQEMU(ctx context.Context, bc buildContext) error {
 		"-drive", answerISO,
 		"-drive", driverISO,
 		"-device", "ide-hd,drive=osdisk,bus=ahci0.0,bootindex=3",
-		"-device", "ide-cd,drive=answeriso,bus=ahci0.2,bootindex=1",
-		"-device", "ide-cd,drive=winiso,bus=ahci0.1,bootindex=2",
+		"-device", "ide-cd,drive=winiso,bus=ahci0.1,bootindex=1",
+		"-device", "ide-cd,drive=answeriso,bus=ahci0.2",
 		"-device", "ide-cd,drive=driveriso,bus=ahci0.3",
 		"-device", "virtio-net-pci",
+		"-qmp", "unix:" + qmpSock + ",server,nowait",
 	}
 
 	if bc.osProfile.EnableTPM {
@@ -574,12 +610,29 @@ func runInstallVMQEMU(ctx context.Context, bc buildContext) error {
 		vmCmd.Stdin = os.Stdin
 	}
 
-	if err := vmCmd.Run(); err != nil {
+	if err := vmCmd.Start(); err != nil {
+		return fmt.Errorf("start qemu: %w", err)
+	}
+
+	// cdboot.efi (EFI/BOOT/BOOTX64.EFI on the Windows ISO) shows a
+	// "Press any key to boot from CD or DVD..." prompt and waits ~5 s.
+	// In a headless build nothing presses that key, so it times out and
+	// exits back to OVMF, which then falls to the UEFI shell.
+	// Fix: send a Return keypress via QMP to dismiss the prompt.
+	go func() {
+		for _, wait := range []time.Duration{2 * time.Second, 2 * time.Second, 2 * time.Second} {
+			time.Sleep(wait)
+			qmpSendKey(qmpSock, "ret", bc.logWriter)
+		}
+	}()
+
+	runErr := vmCmd.Wait()
+	if runErr != nil {
 		if actualSize, infoErr := qcow2ActualSize(ctx, bc.cfg.QemuImgBin, bc.diskPath); infoErr == nil && actualSize > (2*1024*1024*1024) {
-			fmt.Fprintf(bc.logWriter, "warning: qemu exited non-zero (%v), but qcow2 actual-size is %d bytes; continuing\n", err, actualSize)
+			fmt.Fprintf(bc.logWriter, "warning: qemu exited non-zero (%v), but qcow2 actual-size is %d bytes; continuing\n", runErr, actualSize)
 			return nil
 		}
-		return fmt.Errorf("qemu run failed: %w", err)
+		return fmt.Errorf("qemu run failed: %w", runErr)
 	}
 
 	actualSize, err := qcow2ActualSize(ctx, bc.cfg.QemuImgBin, bc.diskPath)
