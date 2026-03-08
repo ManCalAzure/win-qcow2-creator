@@ -66,7 +66,7 @@ docker run -d \
   --device /dev/kvm:/dev/kvm \
   -p 8080:8080 \
   -p 5900:5900 \
-  -v ~/windows-packager/data:/data \
+  -v ~/data:/data \
   zedmanny/windows-packager:latest
 ```
 
