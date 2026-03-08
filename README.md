@@ -51,6 +51,7 @@ Builds unattended Windows qcow2 images (Windows 11 / Server 2025) from a Linux h
 
 ```bash
 mkdir -p ~/windows-packager/data
+#Put all of your .iso .msi files in data/
 cp /path/to/Win11.iso ~/windows-packager/data/
 # optional:
 cp /path/to/CloudbaseInitSetup_x64.msi ~/windows-packager/data/
