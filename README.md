@@ -2,102 +2,135 @@
 
 Builds unattended Windows qcow2 images (Windows 11 / Server 2025) from a Linux host using QEMU/KVM. Includes a built-in web UI and runs headlessly in Docker.
 
-## Container Requirements
-
-| Requirement | Details |
-|-------------|---------|
-| **Port 8080** | Web UI — must be exposed/mapped to access the browser interface |
-| **Port 5900** | VNC console — expose to watch the Windows install live |
-| **`/data` volume** | **Required.** Mount a host directory here. Windows ISOs and optional MSIs go in, finished qcow2 images come out. The container cannot build without this mount. |
-| **`/dev/kvm`** | Strongly recommended. Pass through for hardware-accelerated builds. Without it, QEMU falls back to TCG (software emulation, 5–10× slower). |
-
-## Quick Start (Docker — recommended)
-
-### Portainer Stack
-
-Create a new stack in Portainer and paste the contents of [`portainer-stack.yml`](portainer-stack.yml):
-
-```yaml
-services:
-  windows-packager:
-    image: zedmanny/windows-packager:latest
-    container_name: windows-packager
-    restart: unless-stopped
-    ports:
-      - "8080:8080"   # Web UI — open http://<host-ip>:8080
-      - "5900:5900"   # VNC console — connect with any VNC viewer
-    devices:
-      - /dev/kvm:/dev/kvm   # Remove if KVM unavailable (slower TCG fallback)
-    volumes:
-      - /opt/windows-packager/data:/data   # Place ISOs here; images written here
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        HOW IT WORKS                                 │
+│                                                                     │
+│   Your Host Machine                                                 │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  ./data/  (or /opt/windows-packager/data/)                   │   │
+│  │    ├── Win11.iso              ← you provide                  │   │
+│  │    ├── CloudbaseInit.msi      ← you provide (optional)       │   │
+│  │    └── build/                                                │   │
+│  │          └── win11.qcow2     ← packager writes here          │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│           │  /data volume mount                 ▲                   │
+│           ▼                                     │                   │
+│  ┌─────────────────────────────────────────┐    │                   │
+│  │        Docker Container                 │    │                   │
+│  │  ┌──────────────┐  ┌────────────────┐   │    │                   │
+│  │  │  Web UI      │  │  QEMU/KVM VM   │───┼────┘                   │
+│  │  │  :8080  ─────┼──▶  Windows ISO   │   │                        │
+│  │  │              │  │  VirtIO drivers│   │                        │
+│  │  │  VNC proxy   │  │  Autounattend  │   │                        │
+│  │  │  :5900  ─────┼──▶  (headless)   │   │                        │
+│  │  └──────────────┘  └────────────────┘   │                        │
+│  └─────────────────────────────────────────┘                        │
+│           │                      │                                  │
+│      Browser                 VNC Viewer                             │
+│   http://localhost:8080    localhost:5900                           │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-Create the data directory on the host before deploying:
+## Requirements
+
+| | |
+|---|---|
+| **OS** | Linux x86_64 |
+| **Docker** | Any recent version |
+| **KVM** | `/dev/kvm` must exist — enable Intel VT-x or AMD-V in BIOS |
+| **Port 8080** | Web UI |
+| **Port 5900** | VNC console (watch the install live) |
+| **`/data` mount** | Required — ISOs go in, qcow2 images come out |
+
+---
+
+## Quick Start — `docker run` (laptop / single machine)
+
+**Step 1 — Create your data directory and drop in your ISO:**
 
 ```bash
-sudo mkdir -p /opt/windows-packager/data
-# Then copy your ISOs:
-sudo cp Win11.iso /opt/windows-packager/data/
-sudo cp CloudbaseInitSetup_x64.msi /opt/windows-packager/data/   # optional
+mkdir -p ~/windows-packager/data
+cp /path/to/Win11.iso ~/windows-packager/data/
+# optional:
+cp /path/to/CloudbaseInitSetup_x64.msi ~/windows-packager/data/
 ```
 
-### docker-compose
+**Step 2 — Run the container:**
+
+```bash
+docker run -d \
+  --name windows-packager \
+  --restart unless-stopped \
+  --device /dev/kvm:/dev/kvm \
+  -p 8080:8080 \
+  -p 5900:5900 \
+  -v ~/windows-packager/data:/data \
+  zedmanny/windows-packager:latest
+```
+
+**Step 3 — Open the UI:**
+
+```
+http://localhost:8080
+```
+
+Point the ISO field to `/data/Win11.iso`, click **Build**, and watch progress stream in the browser.
+Connect a VNC viewer to `localhost:5900` to see the Windows installer in real time.
+
+**Step 4 — Get your image:**
+
+```bash
+ls ~/windows-packager/data/build/
+# win11.qcow2   ← your finished image
+```
+
+---
+
+## Quick Start — `docker compose` (clone + run)
 
 ```bash
 git clone https://github.com/ManCalAzure/win-qcow2-creator-for-ubuntu.git
 cd win-qcow2-creator-for-ubuntu
+
 mkdir -p data
-# Copy ISOs into ./data/ before starting
 cp /path/to/Win11.iso data/
+
 docker compose up -d
 ```
 
-Open `http://<host-ip>:8080` — **port 8080 must be reachable from your browser**.
-Connect a VNC viewer to `<host-ip>:5900` to watch the install.
+Open `http://localhost:8080`.
 
-## Portability
-
-The Docker image (`zedmanny/windows-packager:latest`) runs on any Linux x86_64 host with:
-
-- Docker (or compatible runtime)
-- `/dev/kvm` available (Intel VT-x or AMD-V enabled in BIOS)
-
-If `/dev/kvm` is unavailable, remove the `devices:` block — QEMU will fall back to TCG (software emulation, much slower).
+---
 
 ## Data Volume Layout
 
-Mount a host directory to `/data` inside the container. Place input files there and finished images are written there:
-
 ```
-/data/
-  Win11.iso                    # Windows 11 installation ISO
-  WinServer2025.iso            # Windows Server 2025 ISO (optional)
-  CloudbaseInitSetup_x64.msi   # Cloudbase-Init installer (optional)
-  build/
-    win11.qcow2                # Output image (written by packager)
-    ws2025.qcow2
+/data/                              (mounted from host)
+  ├── Win11.iso                     ← Windows 11 ISO  (you provide)
+  ├── WinServer2025.iso             ← WS2025 ISO      (you provide, optional)
+  ├── CloudbaseInitSetup_x64.msi   ← Cloudbase-Init   (optional)
+  └── build/
+        ├── win11.qcow2            ← output image
+        └── ws2025.qcow2           ← output image
 ```
 
-## Web UI
+---
 
-Open `http://<host-ip>:8080` after the container starts.
+## Web UI Defaults
 
-- Select OS, point to ISO and optional MSI paths under `/data/`
-- Click **Build** — progress streams in the browser
-- Connect to VNC at `<host-ip>:5900` to watch the install live
+| Setting | Value |
+|---|---|
+| OVMF Code | `/usr/share/OVMF/OVMF_CODE_4M.fd` |
+| OVMF Vars | `/usr/share/OVMF/OVMF_VARS_4M.fd` |
+| swtpm | `/usr/bin/swtpm` |
+| VirtIO drivers | `/app/drivers` |
+| Work dir | `/data/build` |
+| VNC | `0.0.0.0:0` → port 5900 |
 
-Container defaults:
+---
 
-| Setting      | Value                                  |
-|--------------|----------------------------------------|
-| OVMF Code    | `/usr/share/OVMF/OVMF_CODE_4M.fd`     |
-| OVMF Vars    | `/usr/share/OVMF/OVMF_VARS_4M.fd`     |
-| swtpm        | `/usr/bin/swtpm`                       |
-| VirtIO drivers | `/app/drivers`                       |
-| Work dir     | `/data/build`                          |
-| VNC          | `0.0.0.0:0` (port 5900)               |
-
-## CLI Examples (inside container)
+## Headless CLI Builds (inside running container)
 
 Windows 11:
 
@@ -127,12 +160,14 @@ docker exec windows-packager /app/windows-packager \
   -headless true
 ```
 
-## Golden Profile
+---
 
-Use `-profile golden` for production/cloud image builds:
+## Golden Profile (cloud/production images)
+
+Use `-profile golden` to produce a production-ready cloud image:
 
 - Enables RDP
-- Enables optimize-for-size stage in guest
+- Optimize-for-size pass inside guest
 - Forces final compact + compression
 - Applies Cloudbase-Init NoCloud plugin defaults
 - Installs `virtio-win-gt-x64.msi` if present on driver media
@@ -148,13 +183,19 @@ docker exec windows-packager /app/windows-packager \
   -workdir /data/build
 ```
 
+---
+
 ## Compressing the Output Image
 
-The packager skips final compression by default (`-skip-compact=true`). To compress manually:
+Compression is skipped by default for speed. To shrink the final image manually:
 
 ```bash
-qemu-img convert -p -O qcow2 -c /data/build/win11.qcow2 /data/build/win11.min.qcow2
+qemu-img convert -p -O qcow2 -c \
+  ~/windows-packager/data/build/win11.qcow2 \
+  ~/windows-packager/data/build/win11.min.qcow2
 ```
+
+---
 
 ## Building from Source
 
@@ -162,29 +203,33 @@ qemu-img convert -p -O qcow2 -c /data/build/win11.qcow2 /data/build/win11.min.qc
 git clone https://github.com/ManCalAzure/win-qcow2-creator-for-ubuntu.git
 cd win-qcow2-creator-for-ubuntu
 
-# Build Docker image and push
+# Build and push Docker image
 docker build -t zedmanny/windows-packager:latest .
 docker push zedmanny/windows-packager:latest
 
-# Or build and run natively (Ubuntu 24.04)
+# Native build (Ubuntu 24.04)
 sudo apt install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools xorriso mtools
 go build -o windows-packager ./cmd/windows-packager
 ./windows-packager -ui -ui-listen 0.0.0.0:8080
 ```
 
+---
+
 ## Troubleshooting
 
 | Symptom | Fix |
-|---------|-----|
-| `xorriso` not found | Install `xorriso` (`apt install xorriso`) |
-| swtpm error | Verify path with `which swtpm`; pass `-swtpm <path>` |
-| OVMF not found | Check `/usr/share/OVMF/`; override with `-ovmf-code` / `-ovmf-vars` |
-| Very slow build | Ensure `/dev/kvm` is passed through; check `kvm-ok` on host |
-| KVM unavailable | Remove `devices:` block from compose/stack — falls back to TCG |
+|---|---|
+| Very slow build | Ensure `/dev/kvm` is passed to the container (`--device /dev/kvm`) |
+| KVM unavailable | Drop `--device /dev/kvm` — QEMU falls back to TCG (much slower) |
+| `xorriso` not found | Already bundled in the Docker image; native install: `apt install xorriso` |
+| swtpm error | Bundled in Docker image; native: verify with `which swtpm` |
+| OVMF not found | Bundled in Docker image; native: check `/usr/share/OVMF/` |
+
+---
 
 ## Notes
 
-- Windows 11 unattended install includes LabConfig registry bypasses for TPM, SecureBoot, CPU, and RAM checks.
-- The packager automatically handles the UEFI "Press any key to boot from CD or DVD" prompt via QMP.
-- Automation uses `SetupComplete.cmd` and scripts injected into `C:\Windows\Temp\Packager`.
+- Windows 11 unattended install includes LabConfig bypasses for TPM, SecureBoot, CPU, and RAM checks — no modifications needed.
+- The packager automatically dismisses the UEFI "Press any key to boot from CD or DVD" prompt via QMP so headless builds proceed without human interaction.
+- Automation uses `SetupComplete.cmd` with scripts injected into `C:\Windows\Temp\Packager`.
 - `-backend libvirt` uses `virt-install`/`virsh` instead of direct QEMU — requires libvirt on the host.
