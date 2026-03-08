@@ -38,7 +38,7 @@ Builds unattended Windows qcow2 images (Windows 11 / Server 2025) from a Linux h
 |---|---|
 | **OS** | Linux x86_64 |
 | **Docker** | Any recent version |
-| **KVM** | `/dev/kvm` must exist — enable Intel VT-x or AMD-V in BIOS |
+| **KVM** | `/dev/kvm` must exist on the server — enable Intel VT-x or AMD-V in BIOS |
 | **Port 8080** | Web UI |
 | **Port 5900** | VNC console (watch the install live) |
 | **`/data` mount** | Required — ISOs go in, qcow2 images come out |
